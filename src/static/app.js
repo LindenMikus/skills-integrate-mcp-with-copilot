@@ -2,7 +2,42 @@ document.addEventListener("DOMContentLoaded", () => {
   const activitiesList = document.getElementById("activities-list");
   const activitySelect = document.getElementById("activity");
   const signupForm = document.getElementById("signup-form");
+  const authForm = document.getElementById("auth-form");
+  const registerButton = document.getElementById("register-button");
+  const logoutButton = document.getElementById("logout-button");
+  const authStatus = document.getElementById("auth-status");
+  const signupButton = document.getElementById("signup-button");
   const messageDiv = document.getElementById("message");
+  let currentUser = null;
+
+  function showAuthStatus(message, className = "info") {
+    authStatus.textContent = message;
+    authStatus.className = className;
+  }
+
+  function formatApiError(detail, fallback) {
+    if (Array.isArray(detail)) {
+      return detail
+        .map((error) => {
+          const field = Array.isArray(error.loc) ? error.loc.at(-1) : "";
+          return field ? `${field}: ${error.msg}` : error.msg;
+        })
+        .join(" ");
+    }
+    return typeof detail === "string" ? detail : fallback;
+  }
+
+  function updateAuthControls() {
+    const isAdmin = currentUser?.role === "admin";
+    signupButton.disabled = !isAdmin;
+    logoutButton.classList.toggle("hidden", !currentUser);
+    authForm.classList.toggle("hidden", Boolean(currentUser));
+    if (currentUser) {
+      showAuthStatus(`Logged in as ${currentUser.username} (${currentUser.role})`, "success");
+    } else {
+      showAuthStatus("Log in as a staff member to manage registrations.", "info");
+    }
+  }
 
   // Function to fetch activities from API
   async function fetchActivities() {
@@ -30,7 +65,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 ${details.participants
                   .map(
                     (email) =>
-                      `<li><span class="participant-email">${email}</span><button class="delete-btn" data-activity="${name}" data-email="${email}">❌</button></li>`
+                      `<li><span class="participant-email">${email}</span>${currentUser?.role === "admin" ? `<button class="delete-btn" data-activity="${name}" data-email="${email}">Remove</button>` : ""}</li>`
                   )
                   .join("")}
               </ul>
@@ -66,6 +101,62 @@ document.addEventListener("DOMContentLoaded", () => {
       console.error("Error fetching activities:", error);
     }
   }
+
+  async function loadCurrentUser() {
+    const response = await fetch("/auth/me");
+    const result = await response.json();
+    currentUser = result.user;
+    updateAuthControls();
+  }
+
+  authForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const response = await fetch("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: document.getElementById("username").value,
+        password: document.getElementById("password").value,
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      showAuthStatus(formatApiError(result.detail, "Unable to log in."), "error");
+      return;
+    }
+    currentUser = result.user;
+    authForm.reset();
+    updateAuthControls();
+    fetchActivities();
+  });
+
+  registerButton.addEventListener("click", async () => {
+    const username = document.getElementById("username").value;
+    const password = document.getElementById("password").value;
+    if (!username || !password) {
+      showAuthStatus("Enter a username and password first.", "error");
+      return;
+    }
+    const response = await fetch("/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    const result = await response.json();
+    showAuthStatus(
+      response.ok
+        ? "Account created. Ask an administrator to grant staff access."
+        : formatApiError(result.detail, "Unable to create account."),
+      response.ok ? "success" : "error"
+    );
+  });
+
+  logoutButton.addEventListener("click", async () => {
+    await fetch("/auth/logout", { method: "POST" });
+    currentUser = null;
+    updateAuthControls();
+    fetchActivities();
+  });
 
   // Handle unregister functionality
   async function handleUnregister(event) {
@@ -156,5 +247,5 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Initialize app
-  fetchActivities();
+  loadCurrentUser().then(fetchActivities);
 });
